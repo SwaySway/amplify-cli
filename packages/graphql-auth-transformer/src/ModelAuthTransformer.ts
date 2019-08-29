@@ -15,14 +15,12 @@ import {
     comment
 } from 'graphql-mapping-template';
 import { ModelDirectiveArgs, SubscriptionNameMap } from 'graphql-dynamodb-transformer/src/ModelDirectiveArgs'
+import { ModelDirectiveConfiguration, ModelDirectiveOperationType } from './ModelDirectiveConfiguration';
 
 import {
     OWNER_AUTH_STRATEGY,
     GROUPS_AUTH_STRATEGY,
     DEFAULT_OWNER_FIELD,
-    ON_CREATE_FIELD,
-    ON_UPDATE_FIELD,
-    ON_DELETE_FIELD,
 } from './constants'
 
 
@@ -176,22 +174,19 @@ export class ModelAuthTransformer extends Transformer {
      * Implement the transform for an object type. Depending on which operations are to be protected
      */
     public object = (def: ObjectTypeDefinitionNode, directive: DirectiveNode, ctx: TransformerContext): void => {
-        const get = (s: string) => (arg: ArgumentNode) => arg.name.value === s
-        const getArg = (arg: string, dflt?: any) => {
-            const argument = directive.arguments.find(get(arg))
-            return argument ? valueFromASTUntyped(argument.value) : dflt
-        }
-
         const modelDirective = def.directives.find((dir) => dir.name.value === 'model')
         if (!modelDirective) {
             throw new InvalidDirectiveError('Types annotated with @auth must also be annotated with @model.')
         }
 
         // Get and validate the auth rules.
-        const rules = getArg('rules', []) as AuthRule[]
+        const rules = this.getAuthRulesFromDirective(directive);
         this.validateRules(rules)
 
         const { operationRules, queryRules } = this.splitRules(rules);
+
+        // Retrieve the configuration options for the related @model directive
+        const modelConfiguration = new ModelDirectiveConfiguration(modelDirective, def);
 
         // For each operation evaluate the rules and apply the changes to the relevant resolver.
         this.protectCreateMutation(ctx, ResolverResourceIDs.DynamoDBCreateResolverResourceID(def.name.value), operationRules.create, def)
@@ -203,15 +198,13 @@ export class ModelAuthTransformer extends Transformer {
         this.protectQueries(ctx, def, operationRules.read)
 
         // Check if subscriptions is enabled
-        const directiveArguments: ModelDirectiveArgs = getDirectiveArguments(modelDirective);
-        const subscription = this.validateSubscriptionLevel(directiveArguments);
-        if (subscription.level !== "OFF") {
+        if (modelConfiguration.getName('level') !== "OFF") {
             this.protectOnCreateSubscription(ctx, operationRules.create, def,
-                subscription.level, subscription.onCreate);
+                modelConfiguration);
             this.protectOnUpdateSubscription(ctx, operationRules.update, def,
-                subscription.level, subscription.onUpdate);
+                modelConfiguration);
             this.protectOnDeleteSubscription(ctx, operationRules.delete, def,
-                subscription.level, subscription.onDelete);
+                modelConfiguration);
         }
     }
 
@@ -969,40 +962,37 @@ All @auth directives used on field definitions are performed when the field is r
 
     // OnCreate Subscription
     private protectOnCreateSubscription(ctx: TransformerContext, rules: AuthRule[],
-        parent: ObjectTypeDefinitionNode, level: string, onCreate?: string[]) {
-        if (onCreate) {
-            onCreate.forEach( (name) => {
+        parent: ObjectTypeDefinitionNode, modelConfiguration: ModelDirectiveConfiguration) {
+        const names = modelConfiguration.getNames('onCreate');
+        const level = modelConfiguration.getName('level');
+        if (names) {
+            names.forEach( (name) => {
                 this.addSubscriptionResolvers(ctx, rules, parent, level, name)
             })
-        } else {
-            this.addSubscriptionResolvers(ctx, rules, parent,
-                level, graphqlName(ON_CREATE_FIELD + toUpper(parent.name.value)))
         }
     }
 
     // OnUpdate Subscription
     private protectOnUpdateSubscription(ctx: TransformerContext, rules: AuthRule[],
-        parent: ObjectTypeDefinitionNode, level: string, onUpdate?: string[]) {
-        if (onUpdate) {
-            onUpdate.forEach( (name) => {
+        parent: ObjectTypeDefinitionNode, modelConfiguration: ModelDirectiveConfiguration) {
+        const names = modelConfiguration.getNames('onUpdate');
+        const level = modelConfiguration.getName('level');
+        if (names) {
+            names.forEach( (name) => {
                 this.addSubscriptionResolvers(ctx, rules, parent, level, name)
             })
-        } else {
-            this.addSubscriptionResolvers(ctx, rules, parent,
-                level, graphqlName(ON_UPDATE_FIELD + toUpper(parent.name.value)))
         }
     }
 
     // OnDelete Subscription
     private protectOnDeleteSubscription(ctx: TransformerContext, rules: AuthRule[],
-        parent: ObjectTypeDefinitionNode, level: string, onDelete?: string[]) {
-        if (onDelete) {
-            onDelete.forEach( (name) => {
+        parent: ObjectTypeDefinitionNode, modelConfiguration: ModelDirectiveConfiguration) {
+        const names = modelConfiguration.getNames('onDelete');
+        const level = modelConfiguration.getName('level');
+        if (names) {
+            names.forEach( (name) => {
                 this.addSubscriptionResolvers(ctx, rules, parent, level, name)
             })
-        } else {
-            this.addSubscriptionResolvers(ctx, rules, parent,
-                level, graphqlName(ON_DELETE_FIELD + toUpper(parent.name.value)))
         }
     }
 
@@ -1027,18 +1017,8 @@ All @auth directives used on field definitions are performed when the field is r
 
             const staticGroupAuthorizationExpression = this.resources.staticGroupAuthorizationExpression(
                 staticGroupAuthorizationRules);
-
-            const fieldIsList = (fieldName: string) => {
-                const field = parent.fields.find(field => field.name.value === fieldName);
-                if (field) {
-                    return isListType(field.type);
-                }
-                return false;
-            };
             const ownerAuthorizationExpression = this.resources.ownerAuthorizationExpressionForSubscriptions(
-                ownerAuthorizationRules,
-                fieldIsList
-            );
+                ownerAuthorizationRules);
 
             const throwIfUnauthorizedExpression = this.resources.throwIfSubscriptionUnauthorized();
             const templateParts = [
@@ -1136,6 +1116,17 @@ All @auth directives used on field definitions are performed when the field is r
 
     private getDynamicGroupRules(rules: AuthRule[]): AuthRule[] {
         return rules.filter(rule => rule.allow === 'groups' && !Boolean(rule.groups));
+    }
+
+    private getAuthRulesFromDirective(directive: DirectiveNode): AuthRule[] {
+        const get = (s: string) => (arg: ArgumentNode) => arg.name.value === s
+        const getArg = (arg: string, dflt?: any) => {
+            const argument = directive.arguments.find(get(arg))
+            return argument ? valueFromASTUntyped(argument.value) : dflt
+        }
+
+        // Get and validate the auth rules.
+        return getArg('rules', []) as AuthRule[];
     }
 
 }
