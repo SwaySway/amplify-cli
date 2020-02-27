@@ -508,8 +508,10 @@ Static group authorization should perform as expected.`,
       this.protectDeleteForField(ctx, parent, definition, deleteRules, modelConfiguration);
     } else {
       // if @auth is used without @model only generate static group rules
-      const staticGroupRules = rules.filter((rule: AuthRule) => rule.groups);
-      this.protectField(ctx, parent, definition, staticGroupRules);
+      const staticGroupRules = rules.filter((rule: AuthRule) => rule.groups && !rule.groupsField);
+      if (staticGroupRules.length > 0) {
+        this.protectField(ctx, parent, definition, staticGroupRules);
+      }
     }
   };
 
@@ -552,30 +554,33 @@ Static group authorization should perform as expected.`,
     field: FieldDefinitionNode,
     staticGroupRules: AuthRule[],
   ) {
-    const typeName = parent.name.value;
-    const fieldName = field.name.value;
-    const resolverResourceId = ResolverResourceIDs.ResolverResourceID(typeName, fieldName);
-    let fieldResolverResource = ctx.getResource(resolverResourceId);
-    // add logic here to only use static group rules
-    const staticGroupAuthorizationRules = this.getStaticGroupRules(staticGroupRules);
-    const staticGroupAuthorizationExpression = this.resources.staticGroupAuthorizationExpression(staticGroupAuthorizationRules, field);
-    const throwIfUnauthorizedExpression = this.resources.throwIfUnauthorized(field);
-    const authCheckExpressions = [staticGroupAuthorizationExpression, newline(), throwIfUnauthorizedExpression];
-    const templateParts = [print(compoundExpression(authCheckExpressions))];
-    // if the field resolver does not exist create it
-    if (!fieldResolverResource) {
-      fieldResolverResource = this.resources.blankResolver(typeName, fieldName);
-      ctx.setResource(resolverResourceId, fieldResolverResource);
-      // add none ds if that does not exist
-      const noneDS = ctx.getResource(ResourceConstants.RESOURCES.NoneDataSource);
-      if (!noneDS) {
-        ctx.setResource(ResourceConstants.RESOURCES.NoneDataSource, this.resources.noneDataSource());
+    // if no static group rules no need for resolver code
+    if (staticGroupRules.length > 0) {
+      const typeName = parent.name.value;
+      const fieldName = field.name.value;
+      const resolverResourceId = ResolverResourceIDs.ResolverResourceID(typeName, fieldName);
+      let fieldResolverResource = ctx.getResource(resolverResourceId);
+      // add logic here to only use static group rules
+      const staticGroupAuthorizationRules = this.getStaticGroupRules(staticGroupRules);
+      const staticGroupAuthorizationExpression = this.resources.staticGroupAuthorizationExpression(staticGroupAuthorizationRules, field);
+      const throwIfUnauthorizedExpression = this.resources.throwIfUnauthorized(field);
+      const authCheckExpressions = [staticGroupAuthorizationExpression, newline(), throwIfUnauthorizedExpression];
+      const templateParts = [print(compoundExpression(authCheckExpressions))];
+      // if the field resolver does not exist create it
+      if (!fieldResolverResource) {
+        fieldResolverResource = this.resources.blankResolver(typeName, fieldName);
+        ctx.setResource(resolverResourceId, fieldResolverResource);
+        // add none ds if that does not exist
+        const noneDS = ctx.getResource(ResourceConstants.RESOURCES.NoneDataSource);
+        if (!noneDS) {
+          ctx.setResource(ResourceConstants.RESOURCES.NoneDataSource, this.resources.noneDataSource());
+        }
+      } else {
+        templateParts.push(fieldResolverResource.Properties.RequestMappingTemplate);
       }
-    } else {
-      templateParts.push(fieldResolverResource.Properties.RequestMappingTemplate);
+      fieldResolverResource.Properties.RequestMappingTemplate = templateParts.join('\n\n');
+      ctx.setResource(resolverResourceId, fieldResolverResource);
     }
-    fieldResolverResource.Properties.RequestMappingTemplate = templateParts.join('\n\n');
-    ctx.setResource(resolverResourceId, fieldResolverResource);
   }
 
   private protectReadForField(
