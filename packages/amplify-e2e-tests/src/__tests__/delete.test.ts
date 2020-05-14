@@ -166,12 +166,13 @@ async function bucketExists(bucket: string) {
   const s3 = new S3();
   const params = {
     Bucket: bucket,
+    $waiter: { maxAttempts: 10, delay: 30 },
   };
   try {
-    await s3.headBucket(params).promise();
+    await s3.waitFor('bucketExists', params).promise();
     return true;
   } catch (error) {
-    if (error.statusCode === 404) {
+    if (error.statusCode === 200) {
       return false;
     }
     throw error;
