@@ -877,7 +877,7 @@ test('query using date range for createdAt', async () => {
   expect(searchResponse).toBeDefined();
   const items = searchResponse.data.searchUsers.items;
   expect(items.length).toEqual(expectLenghth);
-  expect(items).toMatch(
+  expect(items).toEqual(
     expect.arrayContaining([expect.objectContaining({ createdAt: '2017-06-10' }), expect.objectContaining({ createdAt: '2017-08-22' })]),
   );
 });
