@@ -203,7 +203,7 @@ async function init(amplifyServiceParams) {
   };
 }
 
-async function deleteEnv(context, envName, awsConfig) {
+async function deleteEnv(context, envName, awsConfig = {}) {
   if (stateManager.teamProviderInfoExists()) {
     const teamProviderInfo = stateManager.getTeamProviderInfo();
     if (
